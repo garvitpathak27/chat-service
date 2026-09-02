@@ -93,12 +93,38 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": env("DB_NAME"),
+        "USER": env("DB_USER"),
+        "PASSWORD": env("DB_PASSWORD"),
+        "HOST": env("DB_HOST"),
+        "PORT": env("DB_PORT"),
+        "CONN_MAX_AGE": 60,
+        "OPTIONS": {
+            "charset": "utf8mb4",
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
 
+# ---------------------------------------------------------------------------
+# Auth Service gRPC dependency
+# ---------------------------------------------------------------------------
+
+AUTH_GRPC_HOST = env("AUTH_GRPC_HOST")
+AUTH_GRPC_PORT = env.int("AUTH_GRPC_PORT")
+AUTH_GRPC_TARGET = f"{AUTH_GRPC_HOST}:{AUTH_GRPC_PORT}"
+
+AUTH_GRPC_TIMEOUT_SECONDS = env.float(
+    "AUTH_GRPC_TIMEOUT_SECONDS",
+    default=2.0,
+)
+
+AUTH_GRPC_MAX_RETRIES = env.int(
+    "AUTH_GRPC_MAX_RETRIES",
+    default=2,
+)
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators

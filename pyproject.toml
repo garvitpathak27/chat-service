@@ -9,10 +9,25 @@ requires-python = "^3.12"
 dependencies = [
     "django (==5.0.14)",
     "djangorestframework (==3.15.2)",
-    "django-environ (==0.11.2)"
+    "django-environ (==0.11.2)",
+    "mysqlclient (==2.2.8)",
+    "grpcio (==1.82.1)"
 ]
 
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=8.0,<9.0)",
+    "pytest-django (>=4.8,<5.0)",
+    "grpcio-tools (==1.82.1)"
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+python_files = ["test_*.py"]
+addopts = "-q --strict-markers"
+testpaths = ["chat/tests"]
