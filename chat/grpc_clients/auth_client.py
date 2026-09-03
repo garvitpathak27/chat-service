@@ -10,7 +10,7 @@ from django.conf import settings
 
 from chat.grpc_clients.generated import auth_pb2_grpc, auth_pb2
 from chat.grpc_clients.types import AuthIdentity
-from chat.grpc_clients.exceptions import InvalidTokenError
+from chat.grpc_clients.exceptions import InvalidTokenError ,AuthUnavailableError
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,17 @@ RETRY_MAX_DELAY_SECONDS = 0.40
 RETRYABLE_CODES = (
     grpc.StatusCode.UNAVAILABLE,
 )
+
+INVALID_TOKEN_CODES = frozenset({
+    grpc.StatusCode.UNAUTHENTICATED,
+})
+
+UNAVAILABLE_CODES = frozenset({
+    grpc.StatusCode.UNAVAILABLE,
+    grpc.StatusCode.DEADLINE_EXCEEDED,
+    grpc.StatusCode.RESOURCE_EXHAUSTED,
+})
+
 
 CHANNEL_OPTIONS = [
     ("grpc.keepalive_time_ms", 30000),
@@ -85,7 +96,9 @@ def get_channel() -> grpc.Channel:
 class AuthServiceClient:
     """client for authentication calls to the auth service """
 
-    def __init__(self, channel: grpc.Channel | None = None):
+    def __init__(self, channel: grpc.Channel | None = None , stub=None):
+        if stub is not None:
+            self._stub = stub
         if channel is None:
             channel = get_channel()
 
@@ -115,6 +128,15 @@ class AuthServiceClient:
                 break
 
             except grpc.RpcError as exc:
+                code = exc.code()
+                
+                if code in INVALID_TOKEN_CODES:
+                    raise InvalidTokenError(grpc_code=code) from exc
+                
+                if code in UNAVAILABLE_CODES:
+                    if code != grpc.StatusCode.UNAVAILABLE or attempt >= max_retries:
+                        raise AuthUnavailableError(grpc_code=code) from exc
+                
                 if exc.code() not in RETRYABLE_CODES or attempt >= max_retries:
                     raise
 
@@ -252,6 +274,118 @@ print('identity:', identity)
 print('total calls:', fake_stub.calls)
 "
 
+
+poetry run python manage.py shell -c "
+import grpc
+from chat.grpc_clients.auth_client import AuthServiceClient
+from chat.grpc_clients.generated import auth_pb2
+
+class FakeRpcError(grpc.RpcError):
+    def __init__(self, code):
+        self._code = code
+
+    def code(self):
+        return self._code
+
+class FakeStub:
+    def __init__(self, response=None, error=None):
+        self.response = response
+        self.error = error
+        self.calls = 0
+
+    def ValidateToken(self, request, timeout=None):
+        self.calls += 1
+
+        if self.error:
+            raise self.error
+
+        return self.response
+
+
+# Test 1: Auth explicitly says active=False
+stub1 = FakeStub(
+    response=auth_pb2.TokenValidationResponse(active=False)
+)
+
+client1 = AuthServiceClient.__new__(AuthServiceClient)
+client1._stub = stub1
+client1._timeout = 2.0
+client1._max_retries = 2
+client1._target = 'fake:50051'
+
+try:
+    client1.verify_token('bad-token')
+except Exception as exc:
+    print('active=False:')
+    print('  exception:', type(exc).__name__)
+    print('  grpc_code:', exc.grpc_code)
+    print('  calls:', stub1.calls)
+
+
+# Test 2: Auth returns UNAUTHENTICATED
+stub2 = FakeStub(
+    error=FakeRpcError(grpc.StatusCode.UNAUTHENTICATED)
+)
+
+client2 = AuthServiceClient.__new__(AuthServiceClient)
+client2._stub = stub2
+client2._timeout = 2.0
+client2._max_retries = 2
+client2._target = 'fake:50051'
+
+try:
+    client2.verify_token('bad-token')
+except Exception as exc:
+    print('UNAUTHENTICATED:')
+    print('  exception:', type(exc).__name__)
+    print('  grpc_code:', exc.grpc_code)
+    print('  calls:', stub2.calls)
+"
+
+
+
+poetry run python manage.py shell -c "
+import grpc
+from chat.grpc_clients.auth_client import AuthServiceClient
+from chat.grpc_clients.generated import auth_pb2
+
+class FakeRpcError(grpc.RpcError):
+    def __init__(self, code):
+        self._code = code
+
+    def code(self):
+        return self._code
+
+class FakeStub:
+    def __init__(self, error):
+        self.error = error
+        self.calls = 0
+
+    def ValidateToken(self, request, timeout=None):
+        self.calls += 1
+        raise self.error
+
+for code in [
+    grpc.StatusCode.DEADLINE_EXCEEDED,
+    grpc.StatusCode.RESOURCE_EXHAUSTED,
+    grpc.StatusCode.UNAVAILABLE,
+]:
+    stub = FakeStub(FakeRpcError(code))
+
+    client = AuthServiceClient.__new__(AuthServiceClient)
+    client._stub = stub
+    client._timeout = 2.0
+    client._max_retries = 2
+    client._target = 'fake:50051'
+
+    try:
+        client.verify_token('test-token')
+    except Exception as exc:
+        print(f'{code.name}:')
+        print(f'  exception: {type(exc).__name__}')
+        print(f'  grpc_code: {exc.grpc_code}')
+        print(f'  calls: {stub.calls}')
+"
 
 
 """
