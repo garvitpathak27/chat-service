@@ -7,6 +7,8 @@ class AuthIdentity:
     """Identity establieshed by the auth service """
     user_id: str
     roles: tuple[str, ...]
+    def has_role(self, role: str) -> bool:
+        return role in self.roles
 
     
 """

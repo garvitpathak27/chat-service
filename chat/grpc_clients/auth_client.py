@@ -1,16 +1,21 @@
-"""framework independent client for the auth service """
+"""framework independent client for the auth service"""
+
 import logging
 import os
 import threading
 import random
 import time
-
+import hashlib
 import grpc
 from django.conf import settings
 
 from chat.grpc_clients.generated import auth_pb2_grpc, auth_pb2
 from chat.grpc_clients.types import AuthIdentity
-from chat.grpc_clients.exceptions import InvalidTokenError ,AuthUnavailableError
+from chat.grpc_clients.exceptions import (
+    InvalidTokenError,
+    AuthUnavailableError,
+    AuthProtocolError,
+)
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -18,19 +23,21 @@ logger = logging.getLogger(__name__)
 RETRY_BASE_DELAY_SECONDS = 0.05
 RETRY_MAX_DELAY_SECONDS = 0.40
 
-RETRYABLE_CODES = (
-    grpc.StatusCode.UNAVAILABLE,
+RETRYABLE_CODES = (grpc.StatusCode.UNAVAILABLE,)
+
+INVALID_TOKEN_CODES = frozenset(
+    {
+        grpc.StatusCode.UNAUTHENTICATED,
+    }
 )
 
-INVALID_TOKEN_CODES = frozenset({
-    grpc.StatusCode.UNAUTHENTICATED,
-})
-
-UNAVAILABLE_CODES = frozenset({
-    grpc.StatusCode.UNAVAILABLE,
-    grpc.StatusCode.DEADLINE_EXCEEDED,
-    grpc.StatusCode.RESOURCE_EXHAUSTED,
-})
+UNAVAILABLE_CODES = frozenset(
+    {
+        grpc.StatusCode.UNAVAILABLE,
+        grpc.StatusCode.DEADLINE_EXCEEDED,
+        grpc.StatusCode.RESOURCE_EXHAUSTED,
+    }
+)
 
 
 CHANNEL_OPTIONS = [
@@ -48,18 +55,18 @@ _channel_lock = threading.Lock()
 
 
 def _backoff_delay(attempt: int) -> float:
-    ceiling = min(
-        RETRY_BASE_DELAY_SECONDS * (2 ** attempt -1),
-        RETRY_MAX_DELAY_SECONDS
-    )
+    ceiling = min(RETRY_BASE_DELAY_SECONDS * (2**attempt - 1), RETRY_MAX_DELAY_SECONDS)
     return random.uniform(ceiling / 2, ceiling)
+
 
 def get_channel() -> grpc.Channel:
     """Return the process-wide channel, creating it on first use."""
 
     global _channel, _channel_pid
 
-    pid = os.getpid() # if a channet was created before the fork the workers , could inherit a channel that belongs to the parent process 
+    pid = (
+        os.getpid()
+    )  # if a channet was created before the fork the workers , could inherit a channel that belongs to the parent process
 
     if _channel is not None and _channel_pid == pid:
         return _channel
@@ -94,28 +101,51 @@ def get_channel() -> grpc.Channel:
 
 
 class AuthServiceClient:
-    """client for authentication calls to the auth service """
+    """client for authentication calls to the auth service"""
 
-    def __init__(self, channel: grpc.Channel | None = None , stub=None):
+    def __init__(
+        self,
+        *,
+        channel: grpc.Channel | None = None,
+        stub=None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
+    ):
         if stub is not None:
             self._stub = stub
-        if channel is None:
-            channel = get_channel()
+        else:
+            if channel is None:
+                channel = get_channel()
 
-        self._stub = auth_pb2_grpc.AuthServiceStub(channel)
-        self._timeout = settings.AUTH_GRPC_TIMEOUT_SECONDS
-        self._max_retries = settings.AUTH_GRPC_MAX_RETRIES
+            self._stub = auth_pb2_grpc.AuthServiceStub(channel)
+
+        self._timeout = (
+            settings.AUTH_GRPC_TIMEOUT_SECONDS if timeout is None else timeout
+        )
+
+        self._max_retries = (
+            settings.AUTH_GRPC_MAX_RETRIES if max_retries is None else max_retries
+        )
+
         self._target = settings.AUTH_GRPC_TARGET
 
-    def verify_token(self,token : str) -> AuthIdentity:
-        """validate a JWT token through the auth service """
+    def verify_token(self, token: str) -> AuthIdentity:
+        """validate a JWT token through the auth service"""
+
+        if not token or not token.strip():
+            raise InvalidTokenError()
+
+        logger.debug(
+            "Validating token token_fp=%s target=%s",
+            token_fingerprint(token),
+            self._target,
+        )
 
         request = auth_pb2.TokenRequest(access_token=token)
         # response = self._stub.ValidateToken(
         #     request,
         #     timeout=settings.AUTH_GRPC_TIMEOUT_SECONDS,
         # )
-
 
         max_retries = self._max_retries
 
@@ -128,42 +158,45 @@ class AuthServiceClient:
                 break
 
             except grpc.RpcError as exc:
-                code = exc.code()
-                
+                code_method = getattr(exc, "code", None)
+
+                code = code_method() if callable(code_method) else None
+
                 if code in INVALID_TOKEN_CODES:
                     raise InvalidTokenError(grpc_code=code) from exc
-                
+
                 if code in UNAVAILABLE_CODES:
                     if code != grpc.StatusCode.UNAVAILABLE or attempt >= max_retries:
                         raise AuthUnavailableError(grpc_code=code) from exc
-                
-                if exc.code() not in RETRYABLE_CODES or attempt >= max_retries:
-                    raise
+
+                if code not in RETRYABLE_CODES or attempt >= max_retries:
+                    raise AuthProtocolError(grpc_code=code) from exc
 
                 delay = _backoff_delay(attempt + 1)
-
                 logger.warning(
-                    "Auth Service unavailable; retrying attempt=%s/%s delay=%.3fs target=%s",
+                    "Auth Service unavailable; retrying attempt=%s/%s delay=%.3fs target=%s token_fp=%s",
                     attempt + 1,
                     max_retries,
                     delay,
                     self._target,
+                    token_fingerprint(token),
                 )
 
                 time.sleep(delay)
 
-
         if not response.active:
             raise InvalidTokenError()
 
+        if not response.user_id or not response.user_id.strip():
+            raise AuthProtocolError()
+
         return AuthIdentity(
             user_id=response.user_id,
-            roles=tuple(response.roles)
+            roles=tuple(role for role in response.roles if role),
         )
 
-
-
-
+def token_fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()[:12]
 """
 HOW TO CHECK WITHOUT RUNNING THE AUTH SERVICE 
 poetry run python -c "
