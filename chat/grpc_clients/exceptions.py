@@ -1,5 +1,6 @@
 """ failure modes of the auth service dependency """
 
+from rest_framework.exceptions import APIException
 class AuthClientError(Exception):
     """Base class for every failure of the Auth Service dependency."""
 
@@ -21,3 +22,8 @@ class AuthProtocolError(AuthClientError):
     """Auth service returned an unusable or unexpected response """
     default_message = "Authentication service returned an invalid response "
 
+class AuthServiceUnavailable(APIException):
+    status_code = 503
+    default_detail = "Authentication service is temporarily unavailable."
+    default_code = "AUTH_UNAVAILABLE"
+    wait = 5
