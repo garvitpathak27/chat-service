@@ -1,6 +1,10 @@
-""" failure modes of the auth service dependency """
+"""Failure modes of the Auth Service dependency.
 
-from rest_framework.exceptions import APIException
+Framework-free on purpose: nothing in chat.grpc_clients imports DRF or
+Django's HTTP layer. chat.authn.exceptions maps these to status codes.
+"""
+
+
 class AuthClientError(Exception):
     """Base class for every failure of the Auth Service dependency."""
 
@@ -10,20 +14,20 @@ class AuthClientError(Exception):
         self.grpc_code = grpc_code
         super().__init__(message or self.default_message)
 
+
 class InvalidTokenError(AuthClientError):
-    """Auth service explicitly rejected the supplied token """
-    default_message = "auth token is invalid "
+    """Auth Service explicitly rejected the supplied token."""
+
+    default_message = "Auth token is invalid."
+
 
 class AuthUnavailableError(AuthClientError):
-    """Auth service could not be reached or did not respond in time """
-    default_message = "auth service is unavailable"
+    """Auth Service could not be reached or did not respond in time."""
+
+    default_message = "Auth Service is unavailable."
+
 
 class AuthProtocolError(AuthClientError):
-    """Auth service returned an unusable or unexpected response """
-    default_message = "Authentication service returned an invalid response "
+    """Auth Service returned an unusable or unexpected response."""
 
-class AuthServiceUnavailable(APIException):
-    status_code = 503
-    default_detail = "Authentication service is temporarily unavailable."
-    default_code = "AUTH_UNAVAILABLE"
-    wait = 5
+    default_message = "Auth Service returned an invalid response."

@@ -1,34 +1,35 @@
-"""Authorization tests for room-level permissions."""
+"""Authorization tests for room-level permissions (ADR-014, Steps 83-91)."""
 
+import pathlib
+import re
+import uuid
 from unittest import mock
-from django.utils import timezone
+
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory
 from rest_framework.views import APIView
-from django.utils import timezone
-from rest_framework.permissions import IsAuthenticated
+
+import chat as chat_package
 from chat.authn import authentication
 from chat.authn.authentication import ChatJWTAuthentication
 from chat.grpc_clients.types import AuthIdentity
 from chat.models import Membership, MembershipRole, Room, RoomType
 from chat.permissions import (
+    SERVER_CONTROLLED_FIELDS,
     CanManageMembers,
     CanManageRoom,
     CanRemoveMembership,
     IsRoomMember,
+    resolve_room_context,
     room_context,
 )
-import chat as chat_package
-from chat.selector import is_admin, is_creator, is_member
-import uuid
-import pathlib
-import re
-from django.db import connection
-from django.test.utils import CaptureQueriesContext
+from chat.selectors import is_admin, is_creator, is_member
 
-factory = APIRequestFactory()
 pytestmark = pytest.mark.django_db
 CHAT_DIR = pathlib.Path(chat_package.__file__).parent
 factory = APIRequestFactory()
@@ -383,14 +384,44 @@ def test_room_permissions_never_consult_auth_service_roles():
     assert "has_role" not in source
     assert ".roles" not in source
 
-SERVER_CONTROLLED_FIELDS = frozenset(
-    {
-        "id",
-        "created_by",
-        "created_at",
-        "updated_at",
-        "deleted_at",
-        "joined_at",
-        "left_at",
-    }
-)
+
+def test_server_controlled_fields_live_in_permissions():
+    """Step 89: one importable source of truth for fields clients never set."""
+    assert {"id", "created_by", "created_at", "updated_at", "deleted_at"} <= SERVER_CONTROLLED_FIELDS
+    assert {"joined_at", "left_at"} <= SERVER_CONTROLLED_FIELDS
+    assert "name" not in SERVER_CONTROLLED_FIELDS
+
+
+# --- Step 90: cross-room manipulation --------------------------------------
+
+
+def test_admin_of_one_room_cannot_act_on_another(as_user, room):
+    other = Room.objects.create(type=RoomType.GROUP, name="Other", created_by="someone")
+    Membership.objects.create(room=other, user_id="someone", role=MembershipRole.ADMIN)
+
+    as_user("creator")  # admin of `room`, nothing in `other`
+
+    assert hit(make_view(CanManageMembers), other.pk).status_code == 404
+
+
+def test_membership_lookup_is_scoped_to_the_room(room):
+    other = Room.objects.create(type=RoomType.GROUP, name="Other", created_by="creator")
+    Membership.objects.create(room=other, user_id="creator", role=MembershipRole.MEMBER)
+
+    assert is_admin(room.pk, "creator") is True
+    assert is_admin(other.pk, "creator") is False
+
+
+# --- Step 86: the per-request cache ----------------------------------------
+
+
+def test_second_resolution_on_the_same_request_hits_the_cache(room):
+    """Two resolutions for the same room on one request = 2 queries, not 4."""
+    request = factory.get("/x/")
+
+    with CaptureQueriesContext(connection) as ctx:
+        first = resolve_room_context(request, str(room.pk), "creator")
+        second = resolve_room_context(request, str(room.pk), "creator")
+
+    assert first is second
+    assert len(ctx.captured_queries) == 2, [q["sql"] for q in ctx.captured_queries]

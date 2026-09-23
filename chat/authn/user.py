@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from chat.grpc_clients.auth_client import AuthIdentity
+from chat.grpc_clients.types import AuthIdentity
 
 
 class RemoteUser:
@@ -67,25 +67,3 @@ class RemoteUser:
 def identity_of(request) -> AuthIdentity | None:
     """Return the verified AuthIdentity for this request, or None."""
     return getattr(request, "auth", None)
-
-
-    """
-poetry run python -c "
-from chat.grpc_clients.types import AuthIdentity
-from chat.authn.user import RemoteUser
-
-u = RemoteUser(
-    AuthIdentity(
-        user_id='u-42',
-        roles=('USER',)
-    )
-)
-
-print(u, u.is_authenticated, u.pk, type(u.pk).__name__, u.has_role('USER'))
-
-try:
-    u.save()
-except NotImplementedError as e:
-    print('not persistable:', e)
-"
-    """

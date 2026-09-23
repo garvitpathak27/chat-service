@@ -40,6 +40,23 @@ message TokenValidationResponse {
   repeated string roles = 3;
   repeated string permissions = 4;
 }
+```
+
+### Observed behaviour of the real Auth Service
+
+Verified against `auth-service/core/grpc_handlers.py` and a live call (Phase 3, Step 73):
+
+| Situation | gRPC status | Response |
+|---|---|---|
+| Valid access token | OK | `active=true`, `user_id=<JWT sub, UUID string>`, `roles`, `permissions` |
+| Invalid / expired / revoked / wrong type | OK | `active=false` (all other fields empty) |
+| Auth unreachable / timeout | UNAVAILABLE / DEADLINE_EXCEEDED | - |
+
+- Auth never returns `UNAUTHENTICATED`; `active=false` is the rejection signal.
+- Chat maps `active=false` to 401, UNAVAILABLE/DEADLINE_EXCEEDED to 503, and
+  anything else (including an empty `user_id`) to 502. See ADR-013.
+- Chat ignores `permissions`; room authorization is local (ADR-014).
+- Auth listens on port 50051 (ADR-004).
 
 
 ## ADR-003 — Canonical auth.proto location (ACCEPTED)
@@ -252,6 +269,14 @@ An active, non-deleted room must always have at least one active
 An admin cannot leave if doing so would leave the room without an
 active admin.
 
+Self-leave: `DELETE /api/rooms/<id>/members/<self>/`, permitted for any
+active member. Emits MEMBER_REMOVED with reason="left". The last active
+admin may not leave: 409 LAST_ADMIN. (Step 91)
+
+> OPEN QUESTION: the Phase 8 guide ships no promote endpoint in v1, which
+> means a room's only admin can never leave. Decide before Phase 8: add a
+> promote endpoint, or auto-promote the longest-standing member.
+
 There is no `owner` role in v1.
 
 
@@ -314,6 +339,7 @@ Every event uses the following envelope:
   "producer": "chat-service",
   "payload": {}
 }
+```
 
 ## ADR-012 — Event envelope (ACCEPTED)
 
@@ -328,6 +354,7 @@ Every Chat Service domain event uses the following envelope:
   "producer": "chat-service",
   "payload": {}
 }
+```
 
 ## ADR-013 — Authentication failure mapping (ACCEPTED)
 
@@ -451,6 +478,7 @@ Chat Service exposes separate liveness and readiness endpoints.
   "status": "UP",
   "service": "chat-service"
 }
+```
 
 
 `GET /health/ready/` response:
@@ -464,3 +492,4 @@ Chat Service exposes separate liveness and readiness endpoints.
     "auth_grpc": "UP"
   }
 }
+```

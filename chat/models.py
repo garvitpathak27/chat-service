@@ -1,9 +1,10 @@
 import uuid
 
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
-from django.core.exceptions import ValidationError
+
 class RoomQuerySet(models.QuerySet):
     def active(self):
         return self.filter(deleted_at__isnull=True)
@@ -16,18 +17,18 @@ class RoomQuerySet(models.QuerySet):
         )
 
 
-class ActiveRoomManager(models.Manager):
+# from_queryset() copies RoomQuerySet's methods onto the manager, so
+# Room.objects.for_user(...) works. With a plain models.Manager subclass,
+# only Room.objects.all().for_user(...) would.
+class ActiveRoomManager(models.Manager.from_queryset(RoomQuerySet)):
     """Default manager: soft-deleted rooms are invisible, full stop."""
 
     def get_queryset(self):
-        return RoomQuerySet(self.model, using=self._db).filter(deleted_at__isnull=True)
+        return super().get_queryset().filter(deleted_at__isnull=True)
 
 
-class AllRoomsManager(models.Manager):
+class AllRoomsManager(models.Manager.from_queryset(RoomQuerySet)):
     """Escape hatch for maintenance/admin code that must see deleted rows."""
-
-    def get_queryset(self):
-        return RoomQuerySet(self.model, using=self._db)
 
 
 
@@ -158,7 +159,24 @@ class Room(models.Model):
 
         if errors:
             raise ValidationError(errors)
-                
+
+    def soft_delete(self):
+        """ADR-008. Returns True only on the FIRST deletion, so callers can
+        make ROOM_DELETED publication idempotent (Step 118)."""
+        if self.deleted_at is not None:
+            return False
+        self.deleted_at = timezone.now()
+        # updated_at is auto_now: it must be listed or it will go stale.
+        self.save(update_fields=["deleted_at", "updated_at"])
+        return True
+
+
+class ActiveMembershipManager(models.Manager):
+    """Default manager: memberships of users who left are invisible."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(left_at__isnull=True)
+
 
 class Membership(models.Model):
     id = models.BigAutoField(primary_key=True)
@@ -193,7 +211,12 @@ class Membership(models.Model):
         default=None,
     )
 
+    objects = ActiveMembershipManager()
+    all_objects = models.Manager()
+
     class Meta:
+        default_manager_name = "objects"
+        base_manager_name = "all_objects"
         constraints = [
             models.UniqueConstraint(
                 fields=["room", "user_id"],
@@ -216,3 +239,32 @@ class Membership(models.Model):
             ),
         ]
 
+    def __str__(self):
+        return f"{self.user_id}@{self.room_id} ({self.role})"
+
+    @property
+    def is_active(self):
+        return self.left_at is None
+
+    def clean(self):
+        super().clean()
+        if self.role not in MembershipRole.values:
+            raise ValidationError({"role": f"Unsupported role: {self.role!r}"})
+        if self.room_id and self.room.deleted_at is not None:
+            raise ValidationError("Cannot modify membership of a deleted room.")
+
+    def deactivate(self):
+        """Soft removal. Returns True only on first deactivation (Step 130)."""
+        if self.left_at is not None:
+            return False
+        self.left_at = timezone.now()
+        self.save(update_fields=["left_at"])
+        return True
+
+    def reactivate(self, role=MembershipRole.MEMBER):
+        """Rejoin semantics (Step 129): reuse the row, reset joined_at."""
+        self.left_at = None
+        self.role = role
+        self.joined_at = timezone.now()
+        self.save(update_fields=["left_at", "role", "joined_at"])
+        return self

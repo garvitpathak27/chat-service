@@ -1,13 +1,29 @@
 from __future__ import annotations
-from chat.models import MembershipRole
 
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import BasePermission
 
-from chat.authn.user import identity_of 
-from chat.selector import get_active_room_or_none, get_active_membership , is_creator
+from chat.authn.user import identity_of
+from chat.models import MembershipRole
+from chat.selectors import get_active_membership, get_active_room_or_none, is_creator
 
-ROOM_NOT_FOUND_DETAIL = "no room  matchins the givin identifier"
+ROOM_NOT_FOUND_DETAIL = "No room matches the given identifier."
+
+# Fields the server owns absolutely. Serializers mark these read-only
+# (Step 93), and views populate them from the verified identity (Step 103).
+# Listed here rather than in a serializer so the guard tests have a single
+# importable source of truth. (Step 89)
+SERVER_CONTROLLED_FIELDS = frozenset(
+    {
+        "id",
+        "created_by",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+        "joined_at",
+        "left_at",
+    }
+)
 
 _CONTEXT_ATTR = "_chat_room_context"
 def resolve_room_context(request, room_id, user_id):
@@ -39,7 +55,7 @@ def room_context(request):
 
 
 class RoomScopedPermission(BasePermission):
-    """ bad permission for operation inside a specific room """
+    """Base permission for operations inside a specific room."""
 
     room_url_kwargs = "room_id"
 
@@ -47,7 +63,7 @@ class RoomScopedPermission(BasePermission):
         identity = identity_of(request)
 
         if identity is None:
-            return False 
+            return False
 
         room_id = view.kwargs.get(self.room_url_kwargs)
 
@@ -70,13 +86,13 @@ class RoomScopedPermission(BasePermission):
 
 class IsRoomMember(RoomScopedPermission):
     """active memebership is sufficient for room access"""
-    message = " you are not a member of this room "
+    message = "You are not a member of this room."
 
 
 class CanManageRoom(RoomScopedPermission):
     """ only admin or the room creator mayh modify the room """
 
-    message= "only a room admin or its creator may modify this room "
+    message = "Only a room admin or its creator may modify this room."
 
     def check_membership(self, request, view, room, membership) -> bool:
         return membership.role == MembershipRole.ADMIN or is_creator(
@@ -86,7 +102,7 @@ class CanManageRoom(RoomScopedPermission):
 
 class CanManageMembers(RoomScopedPermission):
     """ only an admin may0 manage room membership """
-    message  = "only a room admin may manage membership "
+    message = "Only a room admin may manage membership."
 
     def check_membership(self, request, view, room, membership) -> bool:
         return membership.role == MembershipRole.ADMIN
@@ -95,7 +111,7 @@ class CanManageMembers(RoomScopedPermission):
 class CanRemoveMembership(RoomScopedPermission):
     """allow self-leave or admin removal of another member ."""
 
-    message = "only a room admin may remove another member . "
+    message = "Only a room admin may remove another member."
     target_url_kwarg = "user_id"
 
     def check_membership(self, request, view, room, membership) -> bool:

@@ -166,3 +166,55 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+
+# ---------------------------------------------------------------------------
+# Logging (Phase 3, Step 65). Placeholder; Phase 11 replaces it.
+# ---------------------------------------------------------------------------
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "simple": {
+            "format": "{asctime} {levelname} {name} {message}",
+            "style": "{",
+        },
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "simple"},
+    },
+    "loggers": {
+        # Named explicitly rather than configuring the root logger, so DEBUG
+        # here does not also turn on SQL echo and grpc's internal logging.
+        # propagate stays True so pytest's caplog still sees these records.
+        "chat": {"handlers": ["console"], "level": "DEBUG" if DEBUG else "INFO"},
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Django REST Framework (Phase 4, Step 75)
+# ---------------------------------------------------------------------------
+REST_FRAMEWORK = {
+    # Exactly one authenticator. SessionAuthentication and BasicAuthentication
+    # are deliberately absent: they would be a second path to "authenticated"
+    # that never asks Auth Service. With SessionAuthentication first, a failed
+    # login would also come back as 403 instead of 401.
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "chat.authn.authentication.ChatJWTAuthentication",
+    ],
+    # Secure by default: an endpoint is protected unless it opts out with
+    # permission_classes = [AllowAny] (only the health endpoints should).
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    # Chat has no users; don't build Django's AnonymousUser for anonymous calls.
+    "UNAUTHENTICATED_USER": None,
+    "UNAUTHENTICATED_TOKEN": None,
+    "DEFAULT_RENDERER_CLASSES": [
+        "rest_framework.renderers.JSONRenderer",
+    ],
+    "DEFAULT_PARSER_CLASSES": [
+        "rest_framework.parsers.JSONParser",
+    ],
+}
