@@ -425,6 +425,12 @@ with `deleted_at IS NULL`.
 Non-members receive 404 rather than 403 to avoid revealing whether a
 room exists.
 
+CONFIRMED at Step 109 and applied to every room-scoped endpoint:
+GET/PATCH/DELETE /api/rooms/<id>/, GET/POST /api/rooms/<id>/members/,
+DELETE /api/rooms/<id>/members/<user_id>/. The sweep test
+test_every_room_scoped_endpoint_hides_the_room_from_nonmembers enforces it.
+Operators recover the distinction from logs (Step 159), never from responses.
+
 Members who lack the required privilege receive 403.
 
 The room creator is not a special authorization role. `created_by`
@@ -510,3 +516,26 @@ Public prefix for v1 is `/api/`, unversioned.
   same additive-only terms.
 - Health endpoints live OUTSIDE the prefix, at `/health/` and `/health/ready/`
   (ADR-015), because probes must not be coupled to API versioning.
+
+## ADR-017 — List pagination (ACCEPTED)
+
+Every list endpoint is paginated from v1, using page-number pagination.
+
+    GET /api/rooms/?page=2&page_size=25
+
+    {
+      "count": 137,
+      "next": "http://.../api/rooms/?page=3&page_size=25",
+      "previous": "http://.../api/rooms/?page=1&page_size=25",
+      "results": [ ... ]
+    }
+
+- Default page size 50, maximum 200.
+- Applies to `GET /api/rooms/` and `GET /api/rooms/<id>/members/`.
+- Ordering for rooms: `-updated_at, -id`. The second key is a stability
+  tiebreaker, not a preference.
+- Rationale: introducing pagination later changes an array into an object,
+  which ADR-016's additive-only rule forbids for v1.
+- Not chosen: cursor pagination. It is the right answer for a high-churn feed,
+  but `Room.updated_at` is mutable, so a cursor over it is unstable. Revisit
+  if room counts per user ever reach the thousands.

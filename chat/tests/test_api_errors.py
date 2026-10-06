@@ -212,10 +212,12 @@ def test_invalid_token_returns_token_invalid(client, auth_ok):
     assert response.json()["error"]["code"] == ErrorCode.TOKEN_INVALID
 
 
-def test_authenticated_request_reaches_the_stub(client, auth_ok):
+@pytest.mark.django_db
+def test_authenticated_request_reaches_the_view(client, auth_ok):
+    # Phase 5 asserted the 501 stub here; Phase 6 implemented the list.
     response = client.get(reverse("chat:room-list"), HTTP_AUTHORIZATION="Bearer a.b.c")
-    assert response.status_code == 501
-    assert response.json()["error"]["code"] == ErrorCode.NOT_IMPLEMENTED
+    assert response.status_code == 200
+    assert "results" in response.json()
 
 
 @pytest.mark.django_db
@@ -287,7 +289,7 @@ def test_non_uuid_room_id_is_json_404(client):
 
 @pytest.mark.django_db
 def test_adr_014_matrix_over_the_real_routes(client, auth_ok):
-    """The payoff of the stubs: 403 vs 501 decided by the real permissions."""
+    """403 vs 404 vs allowed, decided by the real permissions (501 = stub reached)."""
     from chat.models import Membership, MembershipRole, Room, RoomType
 
     room = Room.objects.create(type=RoomType.GROUP, name="G", created_by="admin")
@@ -305,7 +307,7 @@ def test_adr_014_matrix_over_the_real_routes(client, auth_ok):
         return reverse("chat:room-member-detail", kwargs={"room_id": room.pk, "user_id": user_id})
 
     cases = [
-        ("u-1", "get", detail, 501),
+        ("u-1", "get", detail, 200),             # implemented in Phase 6
         ("u-1", "patch", detail, 403),
         ("u-1", "delete", detail, 403),
         ("admin", "patch", detail, 501),
@@ -320,4 +322,5 @@ def test_adr_014_matrix_over_the_real_routes(client, auth_ok):
     for user_id, method, url, expected in cases:
         response = getattr(client, method)(url, format="json", **as_(user_id))
         assert response.status_code == expected, (user_id, method, url, response.json())
-        assert "error" in response.json()
+        if expected != 200:
+            assert "error" in response.json()

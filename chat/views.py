@@ -1,22 +1,34 @@
 """Views for rooms and memberships.
 
-PHASE 5 STATE: every handler returns 501. The authentication and permission
-wiring is real, so these stubs already enforce ADR-014 - curl them and you get
-401 / 404 / 403 / 501 exactly as the matrix says. Phase 6 (rooms) and Phase 8
-(members) replace the bodies only; the class names, routes and permission
-tables below do not change.
+PHASE 6 STATE: create, list and retrieve are implemented. Room update/delete
+(Phase 7) and every membership operation (Phase 8) are still 501 stubs, each
+already carrying its real permission classes - so the authorization matrix is
+enforced on them today even though the bodies are empty.
+
+Views parse, authorize, choose a status code and render. Writes live in
+chat/services.py; reads live in chat/selectors.py.
 """
 
+from django.urls import reverse
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from chat.api.exceptions import NotImplementedYet
+from chat.api.pagination import DefaultPagination
+from chat.authn.user import identity_of
+from chat.models import RoomType
 from chat.permissions import (
     CanManageMembers,
     CanManageRoom,
     CanRemoveMembership,
     IsRoomMember,
+    require_room_context,
 )
+from chat.selectors import get_active_membership, list_rooms_for, roles_by_room_id
+from chat.serializers import RoomSerializer
+from chat.services import create_group_room, get_or_create_direct_room
 
 
 class MethodPermissionsMixin:
@@ -46,28 +58,78 @@ def _parse_body(request):
     """Force DRF to parse the body now.
 
     DRF parses lazily, so a stub that never reads request.data would answer a
-    malformed JSON body with 501 instead of 400 PARSE_ERROR. Phase 6/8 read
-    request.data through their serializers, which makes this redundant there.
+    malformed JSON body with 501 instead of 400 PARSE_ERROR. Implemented
+    handlers read request.data through their serializers instead.
     """
     request.data  # noqa: B018 - evaluated for its side effect
 
 
 class RoomListCreateView(MethodPermissionsMixin, APIView):
-    """GET  /api/rooms/   list the caller's rooms      (Step 106)
-    POST /api/rooms/   create a room                  (Step 103)
+    """GET  /api/rooms/   the caller's rooms          (Steps 106-107)
+    POST /api/rooms/   create or open a room         (Steps 103-105)
 
     No room in the URL, so no room-scoped permission: any authenticated user
-    may create a room, and the list is filtered by membership in the queryset.
+    may create a room, and the list is filtered by membership in the query.
     """
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        raise NotImplementedYet()
+        identity = identity_of(request)
+
+        queryset = list_rooms_for(identity.user_id)
+
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(queryset, request, view=self)
+
+        # One query for the caller's role in exactly the rooms on this page.
+        # Built from `page`, not the whole queryset, so the IN list stays
+        # bounded by page_size (Step 107).
+        role_map = roles_by_room_id(identity.user_id, [room.pk for room in page])
+
+        serializer = RoomSerializer(
+            page,
+            many=True,
+            context={"request": request, "role_by_room_id": role_map},
+        )
+        return paginator.get_paginated_response(serializer.data)
 
     def post(self, request):
-        _parse_body(request)
-        raise NotImplementedYet()
+        identity = identity_of(request)
+
+        serializer = RoomSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        if data["type"] == RoomType.GROUP:
+            room = create_group_room(
+                name=data["name"],
+                created_by=identity.user_id,   # <- the ONLY source (Step 89)
+            )
+            created = True
+        else:
+            room, created = get_or_create_direct_room(
+                creator_id=identity.user_id,
+                participant_id=data["participant_id"],
+            )
+
+        # Re-read the membership rather than assuming "admin": for a revived
+        # direct room the caller's role is whatever the row now holds.
+        membership = get_active_membership(room.pk, identity.user_id)
+
+        body = RoomSerializer(
+            room, context={"request": request, "membership": membership}
+        ).data
+
+        # An existing direct room is 200, not 201 or 409: "open a DM with X"
+        # is idempotent for the client, which wants a room id either way.
+        return Response(
+            body,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+            headers={
+                "Location": reverse("chat:room-detail", kwargs={"room_id": room.pk})
+            },
+        )
 
 
 class RoomDetailView(MethodPermissionsMixin, APIView):
@@ -84,14 +146,21 @@ class RoomDetailView(MethodPermissionsMixin, APIView):
     }
 
     def get(self, request, room_id):
-        raise NotImplementedYet()
+        # Resolved by IsRoomMember during permission checking (Step 86).
+        # Re-reading here would be a second query AND a second source of
+        # truth. `room_id` is unused: the permission already consumed it.
+        room, membership = require_room_context(request)
+        serializer = RoomSerializer(
+            room, context={"request": request, "membership": membership}
+        )
+        return Response(serializer.data)
 
     def patch(self, request, room_id):
         _parse_body(request)
-        raise NotImplementedYet()
+        raise NotImplementedYet()   # Step 111
 
     def delete(self, request, room_id):
-        raise NotImplementedYet()
+        raise NotImplementedYet()   # Step 115
 
 
 class MemberListCreateView(MethodPermissionsMixin, APIView):
@@ -103,11 +172,11 @@ class MemberListCreateView(MethodPermissionsMixin, APIView):
     }
 
     def get(self, request, room_id):
-        raise NotImplementedYet()
+        raise NotImplementedYet()   # Step 125
 
     def post(self, request, room_id):
         _parse_body(request)
-        raise NotImplementedYet()
+        raise NotImplementedYet()   # Step 120
 
 
 class MemberDetailView(MethodPermissionsMixin, APIView):
@@ -121,4 +190,4 @@ class MemberDetailView(MethodPermissionsMixin, APIView):
     }
 
     def delete(self, request, room_id, user_id):
-        raise NotImplementedYet()
+        raise NotImplementedYet()   # Step 127

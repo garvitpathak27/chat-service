@@ -5,6 +5,7 @@ from `chat.selectors`.
 """
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db.models import Count, Q, Subquery
 
 from chat.models import Membership, MembershipRole, Room
 
@@ -55,3 +56,47 @@ def is_creator(room, user_id) -> bool:
     id, and UUID('x') == 'x' is False in Python.
     """
     return room is not None and str(room.created_by) == str(user_id)
+
+
+def list_rooms_for(user_id):
+    """Active rooms in which user_id holds an active membership (Step 106).
+
+    NOT written as Room.objects.filter(memberships__user_id=...).annotate(...):
+    Django would reuse ONE join for the filter and the Count, and that join is
+    already constrained to the caller, so every room would report
+    member_count 1 - silently (Step 107). Expressing membership as a subquery
+    leaves the outer join to the annotation alone.
+
+    Room.objects is the active-only manager, so soft-deleted rooms are already
+    excluded (ADR-008).
+    """
+    member_room_ids = Membership.objects.filter(
+        user_id=user_id, left_at__isnull=True
+    ).values("room_id")
+
+    return (
+        Room.objects.filter(pk__in=Subquery(member_room_ids))
+        .annotate(
+            active_member_count=Count(
+                "memberships",
+                filter=Q(memberships__left_at__isnull=True),
+                distinct=True,
+            )
+        )
+        # Deterministic and stable. `-id` is the tiebreaker: without a unique
+        # final key, two rooms sharing an updated_at can swap places between
+        # page 1 and page 2 and a client sees one twice and one never.
+        .order_by("-updated_at", "-id")
+    )
+
+
+def roles_by_room_id(user_id, room_ids):
+    """{room_id_str: role} for the caller, in ONE query (Step 107).
+
+    Keys are strings because RoomSerializer.get_my_role looks up str(room.pk),
+    and room_id comes back from the ORM as a UUID.
+    """
+    pairs = Membership.objects.filter(
+        user_id=user_id, left_at__isnull=True, room_id__in=list(room_ids)
+    ).values_list("room_id", "role")
+    return {str(room_id): role for room_id, role in pairs}

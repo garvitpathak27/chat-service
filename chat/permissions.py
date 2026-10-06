@@ -55,6 +55,23 @@ def room_context(request):
     return getattr(request, _CONTEXT_ATTR, None)
 
 
+def require_room_context(request):
+    """Same as room_context(), but raises if it is missing (Step 108).
+
+    A view that calls this without a room-scoped permission class is a wiring
+    bug, and a dangerous one: silently re-querying would produce a room that
+    NOTHING has authorized. Failing loudly beats shipping an unauthorized read.
+    """
+    context = room_context(request)
+    if context is None:
+        raise RuntimeError(
+            "No room context on this request. The view must declare a "
+            "RoomScopedPermission (IsRoomMember, CanManageRoom, ...) and the "
+            "URL must supply room_id."
+        )
+    return context
+
+
 class RoomScopedPermission(BasePermission):
     """Base permission for operations inside a specific room."""
 
