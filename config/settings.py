@@ -217,4 +217,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PARSER_CLASSES": [
         "rest_framework.parsers.JSONParser",
     ],
+    # Step 98: one error envelope {"error": {code, message, details,
+    # request_id}} for every failure. See chat/api/errors.py.
+    "EXCEPTION_HANDLER": "chat.api.errors.chat_exception_handler",
 }

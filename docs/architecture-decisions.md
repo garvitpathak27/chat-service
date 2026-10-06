@@ -493,3 +493,20 @@ Chat Service exposes separate liveness and readiness endpoints.
   }
 }
 ```
+
+## ADR-016 — API versioning (ACCEPTED)
+
+Public prefix for v1 is `/api/`, unversioned.
+
+- The route table lives in `chat/api/urls.py`, mounted once by `config/urls.py`.
+  A future `/api/v2/` is an additional mount of a different module; `/api/` is
+  frozen as v1 from Step 262 onward.
+- No DRF versioning class, no `Accept: application/vnd...` negotiation, no
+  `?version=` parameter. One prefix, one shape.
+- Breaking-change policy for v1: additive only. New optional response fields
+  and new endpoints are fine; removing a field, renaming one, changing a type,
+  or changing an error `code` is not.
+- Error codes (`chat.api.errors.ErrorCode`) are part of the v1 contract, on the
+  same additive-only terms.
+- Health endpoints live OUTSIDE the prefix, at `/health/` and `/health/ready/`
+  (ADR-015), because probes must not be coupled to API versioning.

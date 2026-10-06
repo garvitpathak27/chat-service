@@ -158,7 +158,8 @@ def test_empty_header_is_401(auth_service):
 def test_malformed_header_variants_are_401(auth_service, header):
     response = call(header)
     assert response.status_code == 401
-    assert response.data["detail"].code == "AUTH_HEADER_MALFORMED"
+    # Step 98: the envelope carries the code (was data["detail"].code).
+    assert response.data["error"]["code"] == "AUTH_HEADER_MALFORMED"
     # Never forwarded to Auth: a malformed header is rejected locally.
     assert auth_service.verify_token.call_count == 0
 
@@ -170,7 +171,8 @@ def test_invalid_token_is_401(auth_service):
     auth_service.verify_token.side_effect = InvalidTokenError()
     response = call("Bearer expired.jwt.here")
     assert response.status_code == 401
-    assert response.data["detail"].code == "TOKEN_INVALID"
+    # Step 98: the envelope carries the code (was data["detail"].code).
+    assert response.data["error"]["code"] == "TOKEN_INVALID"
 
 
 def test_401_body_leaks_no_validation_detail(auth_service):

@@ -3,6 +3,7 @@ from __future__ import annotations
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import BasePermission
 
+from chat.api.errors import ErrorCode
 from chat.authn.user import identity_of
 from chat.models import MembershipRole
 from chat.selectors import get_active_membership, get_active_room_or_none, is_creator
@@ -36,12 +37,12 @@ def resolve_room_context(request, room_id, user_id):
     room = get_active_room_or_none(room_id)
 
     if room is None:
-        raise NotFound(ROOM_NOT_FOUND_DETAIL)
+        raise NotFound(ROOM_NOT_FOUND_DETAIL, code=ErrorCode.ROOM_NOT_FOUND)
 
     membership = get_active_membership(room.pk, user_id)
 
     if membership is None:
-        raise NotFound(ROOM_NOT_FOUND_DETAIL)
+        raise NotFound(ROOM_NOT_FOUND_DETAIL, code=ErrorCode.ROOM_NOT_FOUND)
 
     context = (room, membership)
     setattr(request, _CONTEXT_ATTR, context)
