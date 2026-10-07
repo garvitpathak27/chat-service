@@ -221,3 +221,14 @@ REST_FRAMEWORK = {
     # request_id}} for every failure. See chat/api/errors.py.
     "EXCEPTION_HANDLER": "chat.api.errors.chat_exception_handler",
 }
+
+# ---------------------------------------------------------------------------
+# Domain events (ADR-006, ADR-011, ADR-012)
+# ---------------------------------------------------------------------------
+# Dotted path to the callable that actually ships an event:
+#     transport(envelope: dict, routing_key: str) -> None
+# Phase 9 Step 136 changes this to the RabbitMQ publisher. A plain constant,
+# not an env var, because the .env list was frozen in Phase 0 and this is a
+# wiring choice rather than per-environment configuration.
+CHAT_EVENT_TRANSPORT = "chat.events.log_only_transport"
+

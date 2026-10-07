@@ -27,9 +27,8 @@ from chat.permissions import (
     require_room_context,
 )
 from chat.selectors import get_active_membership, list_rooms_for, roles_by_room_id
-from chat.serializers import RoomSerializer
-from chat.services import create_group_room, get_or_create_direct_room
-
+from chat.serializers import RoomSerializer , RoomUpdateSerializer
+from chat.services import create_group_room, get_or_create_direct_room ,update_room ,delete_room
 
 class MethodPermissionsMixin:
     """Per-HTTP-method permission classes.
@@ -156,11 +155,35 @@ class RoomDetailView(MethodPermissionsMixin, APIView):
         return Response(serializer.data)
 
     def patch(self, request, room_id):
-        _parse_body(request)
-        raise NotImplementedYet()   # Step 111
+            # CanManageRoom resolved these during permission checking (Step 87),
+            # so reaching this line already proves admin-or-creator.
+            room, membership = require_room_context(request)
+            identity = identity_of(request)
+
+            serializer = RoomUpdateSerializer(room, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+
+            room, _applied = update_room(
+                room=room,
+                changes=serializer.validated_data,
+                updated_by=identity.user_id,
+            )
+
+            body = RoomSerializer(
+                room, context={"request": request, "membership": membership}
+            ).data
+            return Response(body)
 
     def delete(self, request, room_id):
-        raise NotImplementedYet()   # Step 115
+        # CanManageRoom already proved admin-or-creator, and resolved the room
+        # through Room.objects - so a soft-deleted room never reaches here.
+        room, _membership = require_room_context(request)
+        identity = identity_of(request)
+
+        delete_room(room=room, deleted_by=identity.user_id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 
 
 class MemberListCreateView(MethodPermissionsMixin, APIView):

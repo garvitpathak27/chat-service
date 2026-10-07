@@ -17,9 +17,12 @@ import logging
 from django.db import IntegrityError, transaction
 
 from chat.models import Membership, MembershipRole, Room, RoomType
-
+from chat.events import EventType , isoformat_utc , publish_on_commit
 logger = logging.getLogger("chat.services")
 
+MUTABLE_ROOM_FIELDS = frozenset({"name"})
+
+from django.utils import timezone
 
 @transaction.atomic
 def create_group_room(*, name: str, created_by: str) -> Room:
@@ -138,3 +141,82 @@ def _revive_direct_room(room: Room, creator_id: str, participant_id: str) -> Roo
     if changed:
         logger.info("revived direct room id=%s", room.pk)
     return room
+
+
+def update_room(*,room: Room , changes: dict , updated_by: str)-> tuple[Room , dict]:
+    """
+    Apply mutable metadata changes. Returns (room, applied_changes).
+
+    `applied_changes` contains only fields whose value actually differs, which
+    is what ADR-011's ROOM_UPDATED payload calls `changed_fields`. An empty
+    dict means the request was a no-op: nothing is written, updated_at is not
+    touched, and no event is scheduled.
+
+    `changes` comes from RoomUpdateSerializer.validated_data, which can only
+    ever contain `name` (Step 112). Passing anything else would raise here
+    rather than silently writing it.
+    """
+    applied = {}
+    for field, value in changes.items():
+        if field not in MUTABLE_ROOM_FIELDS:
+            raise ValueError(
+                f"update_room refuses to write {field!r}"
+                f"mutable fields are {sorted(MUTABLE_ROOM_FIELDS)}"
+
+            )
+        if getattr(room , field) != value:
+            setattr(room, field , value)
+            applied[field] = value
+    if not applied:
+        logger.debug("update room no of id=%s by= %s ", room.pk , updated_by )
+        return room, {}
+    
+    room.save(update_fields=[*applied.keys(),"updated_at"])
+
+    publish_on_commit(
+        EventType.ROOM_UPDATED,
+        {
+            "room_id": str(room.pk),
+            "changed_fields": applied,
+            "updated_by": updated_by,
+            "updated_at": isoformat_utc(room.updated_at),
+        },
+    )
+    logger.info("room updated id=%s fields = %s by = %s" , room.pk , sorted(applied) ,updated_by)
+    return room , applied
+
+
+def delete_room(*, room: Room, deleted_by: str) -> bool:
+    member_user_ids = list(
+        Membership.objects.filter(room=room)
+        .order_by("user_id")
+        .values_list("user_id", flat=True)
+    )
+
+    if not room.soft_delete():
+        logger.info("delete_room no-op id=%s already deleted", room.pk)
+        return False
+
+    # Queryset .update() is correct here and wrong for Room: Membership has no
+    # auto_now column, so nothing is silently skipped, and one statement beats
+    # N saves for a large room.
+    deactivated = Membership.objects.filter(room=room).update(left_at=timezone.now())
+
+    publish_on_commit(
+        EventType.ROOM_DELETED,
+        {
+            "room_id": str(room.pk),
+            "type": room.type,
+            "deleted_by": deleted_by,
+            "deleted_at": isoformat_utc(room.deleted_at),
+            "member_user_ids": member_user_ids,
+        },
+    )
+    logger.info(
+        "room deleted id=%s by=%s memberships_deactivated=%s",
+        room.pk,
+        deleted_by,
+        deactivated,
+    )
+    return True
+

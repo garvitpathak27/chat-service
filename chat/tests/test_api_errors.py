@@ -310,7 +310,7 @@ def test_adr_014_matrix_over_the_real_routes(client, auth_ok):
         ("u-1", "get", detail, 200),             # implemented in Phase 6
         ("u-1", "patch", detail, 403),
         ("u-1", "delete", detail, 403),
-        ("admin", "patch", detail, 501),
+        ("admin", "patch", detail, 200),
         ("u-1", "get", members, 501),
         ("u-1", "post", members, 403),
         ("admin", "post", members, 501),

@@ -169,11 +169,34 @@ class RoomSerializer(serializers.ModelSerializer):
 
 
 class RoomUpdateSerializer(serializers.ModelSerializer):
-    """Input shape for PATCH /api/rooms/<id>/ (used from Step 111).
+    """Input shape for PATCH /api/rooms/<id>/.
 
-    Separate from RoomSerializer on purpose: `type` and `participant_id` are
-    creation-time concepts. A room's type is immutable.
+    DRF's default behaviour for an unrecognised key in the body is to ignore
+    it silently. For an update endpoint that is a bad default: a client that
+    sends {"type": "direct"} gets 200 and reasonably concludes the change was
+    applied. This serializer rejects those keys instead, so a wrong assumption
+    surfaces at the first request rather than as a data mystery weeks later.
     """
+
+    MUTABLE_FIELDS = frozenset({"name"})
+
+    # Explicit rather than derived, so adding a model column does not silently
+    # become PATCHable. Anything not in MUTABLE_FIELDS is refused; this set
+    # exists to give the refusal a better message than "unknown field".
+    IMMUTABLE_FIELDS = frozenset(
+        {
+            "id",
+            "type",
+            "created_by",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+            "direct_key",
+            "participant_id",
+            "member_count",
+            "my_role",
+        }
+    )
 
     class Meta:
         model = Room
@@ -188,6 +211,20 @@ class RoomUpdateSerializer(serializers.ModelSerializer):
         if not value:
             raise serializers.ValidationError("A group room requires a non-empty name.")
         return value
+
+    def validate(self, attrs):
+        supplied = set(getattr(self, "initial_data", None) or {})
+
+        errors = {}
+        for field in sorted(supplied & self.IMMUTABLE_FIELDS):
+            errors[field] = ["This field cannot be changed after the room is created."]
+        for field in sorted(supplied - self.IMMUTABLE_FIELDS - self.MUTABLE_FIELDS):
+            errors[field] = ["Unknown field."]
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 
 class MembershipSerializer(serializers.ModelSerializer):
