@@ -330,17 +330,16 @@ def test_room_deleted_payload(
     # Captured BEFORE deactivation - the reason for the ordering in Step 116.
     assert payload["member_user_ids"] == ["admin-1", "member-1"]
 
-
-def test_repeated_deletion_publishes_exactly_one_event(room, events):
+def test_repeated_deletion_publishes_exactly_one_event(room, events, django_capture_on_commit_callbacks):
     """Step 118, at the service layer where retries actually happen."""
-    assert delete_room(room=room, deleted_by="admin-1") is True
-    stamp = Room.all_objects.get(pk=room.pk).deleted_at
-    assert delete_room(room=room, deleted_by="admin-1") is False
-    assert delete_room(room=room, deleted_by="admin-1") is False
+    with django_capture_on_commit_callbacks(execute=True):
+        assert delete_room(room=room, deleted_by="admin-1") is True
+        stamp = Room.all_objects.get(pk=room.pk).deleted_at
+        assert delete_room(room=room, deleted_by="admin-1") is False
+        assert delete_room(room=room, deleted_by="admin-1") is False
 
     assert types_of(events).count(EventType.ROOM_DELETED) == 1
     assert Room.all_objects.get(pk=room.pk).deleted_at == stamp
-
 
 # --- Step 114: the events module itself ------------------------------------
 
