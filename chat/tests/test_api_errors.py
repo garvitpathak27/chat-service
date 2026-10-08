@@ -289,7 +289,7 @@ def test_non_uuid_room_id_is_json_404(client):
 
 @pytest.mark.django_db
 def test_adr_014_matrix_over_the_real_routes(client, auth_ok):
-    """403 vs 404 vs allowed, decided by the real permissions (501 = stub reached)."""
+    """403 vs 404 vs allowed, decided by the real permissions (all three endpoints are now implemented)."""
     from chat.models import Membership, MembershipRole, Room, RoomType
 
     room = Room.objects.create(type=RoomType.GROUP, name="G", created_by="admin")
@@ -306,21 +306,26 @@ def test_adr_014_matrix_over_the_real_routes(client, auth_ok):
     def member(user_id):
         return reverse("chat:room-member-detail", kwargs={"room_id": room.pk, "user_id": user_id})
 
+    # Order matters: removals are real now (Step 127), so each row that
+    # deactivates a membership must run AFTER every row that still needs
+    # that person active. u-1 self-leaves once (row order fixed below) and
+    # is never targeted again; the final admin-removal check targets u-2
+    # instead of a u-1 that has already left.
     cases = [
-        ("u-1", "get", detail, 200),             # implemented in Phase 6
-        ("u-1", "patch", detail, 403),
-        ("u-1", "delete", detail, 403),
-        ("admin", "patch", detail, 200),
-        ("u-1", "get", members, 501),
-        ("u-1", "post", members, 403),
-        ("admin", "post", members, 501),
-        ("u-1", "delete", member("u-1"), 501),    # self-leave
-        ("u-1", "delete", member("admin"), 403),
-        ("admin", "delete", member("u-1"), 501),
-        ("stranger", "get", detail, 404),
+        ("u-1", "get", detail, 200, None),             # implemented in Phase 6
+        ("u-1", "patch", detail, 403, None),
+        ("u-1", "delete", detail, 403, None),
+        ("admin", "patch", detail, 200, None),
+        ("u-1", "get", members, 200, None),             # implemented in Step 125
+        ("u-1", "post", members, 403, {"user_id": "u-2"}),
+        ("admin", "post", members, 201, {"user_id": "u-2"}),   # Step 120
+        ("u-1", "delete", member("admin"), 403, None),   # u-1 still active here
+        ("u-1", "delete", member("u-1"), 204, None),     # self-leave, Step 127
+        ("admin", "delete", member("u-2"), 204, None),   # implemented in Step 127
+        ("stranger", "get", detail, 404, None),
     ]
-    for user_id, method, url, expected in cases:
-        response = getattr(client, method)(url, format="json", **as_(user_id))
+    for user_id, method, url, expected, body in cases:
+        response = getattr(client, method)(url, body or {}, format="json", **as_(user_id))
         assert response.status_code == expected, (user_id, method, url, response.json())
-        if expected != 200:
+        if expected not in (200, 201, 204):
             assert "error" in response.json()

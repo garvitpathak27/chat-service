@@ -26,9 +26,9 @@ from chat.permissions import (
     IsRoomMember,
     require_room_context,
 )
-from chat.selectors import get_active_membership, list_rooms_for, roles_by_room_id
-from chat.serializers import RoomSerializer , RoomUpdateSerializer
-from chat.services import create_group_room, get_or_create_direct_room ,update_room ,delete_room
+from chat.selectors import get_active_membership, list_member_for, list_rooms_for, roles_by_room_id
+from chat.serializers import MembershipCreateSerializer, MembershipSerializer, RoomSerializer , RoomUpdateSerializer, validate_membership_removal
+from chat.services import add_member, create_group_room, get_or_create_direct_room, remove_member ,update_room ,delete_room
 
 class MethodPermissionsMixin:
     """Per-HTTP-method permission classes.
@@ -195,11 +195,39 @@ class MemberListCreateView(MethodPermissionsMixin, APIView):
     }
 
     def get(self, request, room_id):
-        raise NotImplementedYet()   # Step 125
+        room , _membership  = require_room_context(request)   # Step 125
+        paginator = DefaultPagination()
+        page = paginator.paginate_queryset(list_member_for(room), request, view=self)
+        serializer = MembershipSerializer(page , many=True)
+        return paginator.get_paginated_response(serializer.data)
 
     def post(self, request, room_id):
-        _parse_body(request)
-        raise NotImplementedYet()   # Step 120
+        # CanManageMembers already proved the caller is an admin of THIS room.
+        room, _membership = require_room_context(request)
+        identity = identity_of(request)
+
+        serializer = MembershipCreateSerializer(
+            data=request.data, context={"room": room}
+        )
+        serializer.is_valid(raise_exception=True)
+
+        membership = add_member(
+            room=room,
+            user_id=serializer.validated_data["user_id"],
+            added_by=identity.user_id,
+        )
+
+        return Response(
+            MembershipSerializer(membership).data,
+            status=status.HTTP_201_CREATED,
+            headers={
+                "Location": reverse(
+                    "chat:room-member-detail",
+                    kwargs={"room_id": room.pk, "user_id": membership.user_id},
+                )
+            },
+        )
+
 
 
 class MemberDetailView(MethodPermissionsMixin, APIView):
@@ -213,4 +241,21 @@ class MemberDetailView(MethodPermissionsMixin, APIView):
     }
 
     def delete(self, request, room_id, user_id):
-        raise NotImplementedYet()   # Step 127
+        # CanRemoveMembership already allowed this: either the caller is
+        # removing themselves, or they are an admin of THIS room (Step 90).
+        room, _actor_membership = require_room_context(request)
+        identity = identity_of(request)
+
+        # Friendly pre-check outside the lock: direct-room and not-found
+        # produce clean 400/404s without taking row locks (Phase 5 Step 97).
+        validate_membership_removal(room, user_id, identity.user_id)
+
+        # Authoritative: re-checks the same conditions under SELECT ... FOR
+        # UPDATE, plus the last-admin invariant (Step 128).
+        remove_member(
+            room=room,
+            target_user_id=user_id,
+            removed_by=identity.user_id,
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+

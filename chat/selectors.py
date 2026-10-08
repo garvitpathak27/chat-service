@@ -100,3 +100,23 @@ def roles_by_room_id(user_id, room_ids):
         user_id=user_id, left_at__isnull=True, room_id__in=list(room_ids)
     ).values_list("room_id", "role")
     return {str(room_id): role for room_id, role in pairs}
+
+def list_member_for(room):
+    """Active memberships of a room, ordered admins first then user_id.
+
+      Membership.objects is the active-only manager, so departed members are
+      already excluded - a room's history stays in the table (ADR-008) without
+      leaking into the roster (Step 228).
+
+      NOTE on the ordering: role ASC happens to put "admin" before "member"
+      because that is their alphabetical order. That is a coincidence, not a
+      design. It is pinned by test_admins_are_listed_first so that renaming a
+      role - or adding "owner" - fails loudly here rather than silently
+      reshuffling every client's member list.
+      """
+
+    return(
+        Membership.objects.filter(room=room)
+        .only("id","room_id","user_id","role","joined_at")
+        .order_by("role","user_id")
+    )

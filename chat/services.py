@@ -15,7 +15,12 @@ from __future__ import annotations
 import logging
 
 from django.db import IntegrityError, transaction
-
+from chat.api.exceptions import(
+    DirectRoomImmutable,
+    LastAdminError,
+    MemberAlreadyExists,
+    MemberNotFound
+)
 from chat.models import Membership, MembershipRole, Room, RoomType
 from chat.events import EventType , isoformat_utc , publish_on_commit
 logger = logging.getLogger("chat.services")
@@ -219,4 +224,121 @@ def delete_room(*, room: Room, deleted_by: str) -> bool:
         deactivated,
     )
     return True
+
+
+@transaction.atomic
+def add_member(*,room:Room , user_id:str , added_by:str) -> Membership:
+    """Add a user to a group room, or reactivate them if they were removed.
+
+      Returns the active Membership. Raises:
+          DirectRoomImmutable  400 - direct rooms have a fixed roster
+          MemberAlreadyExists  409 - already an ACTIVE member
+
+      Every new or reactivated membership gets role=member (Step 123).
+      """
+
+    if room.type == RoomType.DIRECT:
+        raise DirectRoomImmutable()
+    
+    existing = Membership.all_objects.filter(room=room , user_id = user_id).first()
+    
+    if existing is not None:
+        if existing.left_at is None:
+            raise MemberAlreadyExists()
+        membership = existing.reactivate(role=MembershipRole.MEMBER)
+    else:
+        try:
+            with transaction.atomic():
+                membership = Membership.objects.create(
+                    room=room,
+                    user_id=user_id,
+                    role = MembershipRole.MEMBER
+                )
+        except IntegrityError:
+            logger.info("lost membership race room=%s , user=%s , re-reading",room.pk , user_id)
+            existing = Membership.all_objects.filter(
+                room=room,
+                user_id=user_id
+            ).first()
+            if existing is None:
+                raise
+            if existing.left_at is None:
+                raise MemberAlreadyExists()
+            membership = existing.reactivate(role=MembershipRole.MEMBER)
+    publish_on_commit(
+        EventType.MEMBER_ADDED,
+        {
+            "room_id": str(room.pk),
+            "user_id": membership.user_id,
+            "role": membership.role,
+            "added_by": added_by,
+            "joined_at": isoformat_utc(membership.joined_at),
+        },
+    )
+    logger.info(
+        "member added room=%s user=%s by=%s", room.pk, membership.user_id, added_by
+    )
+    return membership
+
+
+@transaction.atomic
+def remove_member(*, room: Room, target_user_id: str, removed_by: str) -> Membership:
+    """Deactivate a membership. Returns the deactivated Membership.
+
+    Raises:
+        DirectRoomImmutable  400 - direct rooms have a fixed roster
+        MemberNotFound       404 - no ACTIVE membership for that user here
+        LastAdminError       409 - would leave the room without an admin
+
+    CONCURRENCY. The admin count and the write must be atomic with respect to
+    other removals, so the roster is read with SELECT ... FOR UPDATE. Without
+    it, two admins leaving simultaneously each read "2 admins", each conclude
+    it is safe, and the room ends up with none - permanently, because v1 has
+    no promotion endpoint (Step 123) to repair it.
+    """
+    if room.type == RoomType.DIRECT:
+        raise DirectRoomImmutable()
+
+    # Lock every ACTIVE membership row of this room for the rest of the
+    # transaction. order_by("user_id") gives a consistent lock acquisition
+    # order across concurrent transactions, which is what keeps two
+    # simultaneous removals from deadlocking each other.
+    memberships = list(
+        Membership.objects.select_for_update()
+        .filter(room=room)
+        .order_by("user_id")
+    )
+
+    target = next(
+        (m for m in memberships if str(m.user_id) == str(target_user_id)), None
+    )
+    if target is None:
+        raise MemberNotFound()
+
+    if target.role == MembershipRole.ADMIN:
+        active_admins = [m for m in memberships if m.role == MembershipRole.ADMIN]
+        if len(active_admins) == 1:
+            raise LastAdminError()
+
+    target.deactivate()
+
+    reason = "left" if str(removed_by) == str(target_user_id) else "removed"
+    publish_on_commit(
+        EventType.MEMBER_REMOVED,
+        {
+            "room_id": str(room.pk),
+            "user_id": target.user_id,
+            "removed_by": removed_by,
+            "removed_at": isoformat_utc(target.left_at),
+            "reason": reason,
+        },
+    )
+    logger.info(
+        "member removed room=%s user=%s by=%s reason=%s",
+        room.pk,
+        target.user_id,
+        removed_by,
+        reason,
+    )
+    return target
 
