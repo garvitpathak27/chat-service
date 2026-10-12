@@ -230,5 +230,13 @@ REST_FRAMEWORK = {
 # Phase 9 Step 136 changes this to the RabbitMQ publisher. A plain constant,
 # not an env var, because the .env list was frozen in Phase 0 and this is a
 # wiring choice rather than per-environment configuration.
-CHAT_EVENT_TRANSPORT = "chat.events.log_only_transport"
+CHAT_EVENT_TRANSPORT = "chat.messaging.publisher.publish_to_rabbitmq"
+
+RABBITMQ_HOST = env("RABBITMQ_HOST")
+RABBITMQ_PORT = env.int("RABBITMQ_PORT")
+RABBITMQ_VHOST = env("RABBITMQ_VHOST")
+RABBITMQ_USER = env("RABBITMQ_USER")
+RABBITMQ_PASSWORD = env("RABBITMQ_PASSWORD")
+RABBITMQ_EXCHANGE = env("RABBITMQ_EXCHANGE")
+
 
