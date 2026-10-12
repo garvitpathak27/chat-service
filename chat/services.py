@@ -45,15 +45,24 @@ def create_group_room(*, name: str, created_by: str) -> Room:
         name=name,
         created_by=created_by,
     )
-    Membership.objects.create(
+    membership = Membership.objects.create(
         room=room,
         user_id=created_by,
         role=MembershipRole.ADMIN,
     )
-    # Step 140 hook:
-    #   transaction.on_commit(lambda: publish_room_created(room))
-    # Deliberately absent until Phase 9 - publishing before the publisher
-    # exists would mean either a silent no-op or an import that fails.
+    publish_on_commit(
+        EventType.ROOM_CREATED,
+        {
+            "room_id":str(room.pk),
+            "type": room.type,
+            "name": room.name,
+            "created_by": created_by,
+            "created_at": isoformat_utc(room.created_at),
+            "members": [
+                {"user_id": membership.user_id , "role" : membership.role}
+            ],
+        },
+    )
     logger.info("room created id=%s type=group by=%s", room.pk, created_by)
     return room
 
