@@ -57,22 +57,30 @@ def register_with_eureka() -> bool:
     """
     
     global _registered
-    if not eureka_enabled():
-        logger.info("eureka registration disabled : EUREKA_SERVER_URL is empty ")
+    if _registered:
+        logger.debug("eureka already registered - skipping")
         return False
+    if not eureka_enabled():
+        logger.info("eureka registration disabled : EUREKA_SERVER_URL is empty")
+        return False
+
     
     try:
         from py_eureka_client import eureka_client
-        
+
+        home_page_url = f"{base_url()}/"
+        status_page_url = f"{base_url()}/health/"
+        health_check_url = f"{base_url()}/health/"
+
         eureka_client.init(
             eureka_server=settings.EUREKA_SERVER_URL,
             app_name=settings.EUREKA_APP_NAME,
             instance_id=instance_id(),
             instance_host=settings.EUREKA_INSTANCE_HOST,
             instance_port=settings.EUREKA_INSTANCE_PORT,
-            home_page_url=f"{base_url()}/",
-            status_page_url=f"{base_url()}/health/",
-            health_check_url=f"{base_url()}/health/",
+            home_page_url=home_page_url,
+            status_page_url=status_page_url,
+            health_check_url=health_check_url,
             renewal_interval_in_secs=RENEWAL_INTERVAL_SECONDS,
             duration_in_secs=LEASE_DURATION_SECONDS,
             metadata={
@@ -82,14 +90,14 @@ def register_with_eureka() -> bool:
         )
     except Exception:
         logger.exception(
-            "eureka registration failed server=%s app=%s instance=%s "
-            "- continueing without discovery ",
+            "Eureka registration FAILED server=%s app=%s instance=%s "
+            "- continuing without discovery",
             settings.EUREKA_SERVER_URL,
             settings.EUREKA_APP_NAME,
             instance_id(),
         )
         return False
-    
+
     _registered = True
     _install_shutdown_hook()
     logger.info(
@@ -100,6 +108,7 @@ def register_with_eureka() -> bool:
         health_check_url,
     )
     return True
+
 
 def deregister_from_eureka() -> None:
     """best effort removal from the registery on shutdown """
