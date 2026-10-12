@@ -59,14 +59,19 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # FIRST: everything below needs the correlation id.
+    "chat.observability.correlation.CorrelationIdMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # LAST: innermost, so it measures the view and not the middleware stack.
+    "chat.observability.querycount.QueryCountMiddleware",
 ]
+
 
 ROOT_URLCONF = 'config.urls'
 
@@ -175,21 +180,36 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "simple": {
-            "format": "{asctime} {levelname} {name} {message}",
-            "style": "{",
-        },
+        "json": {"()": "chat.observability.formatters.JsonFormatter"},
+    },
+    "filters": {
+        "redact_secrets": {"()": "chat.observability.redaction.SecretRedactionFilter"},
     },
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "simple"},
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "filters": ["redact_secrets"],
+        },
     },
     "loggers": {
-        # Named explicitly rather than configuring the root logger, so DEBUG
-        # here does not also turn on SQL echo and grpc's internal logging.
-        # propagate stays True so pytest's caplog still sees these records.
-        "chat": {"handlers": ["console"], "level": "DEBUG" if DEBUG else "INFO"},
+        "chat": {
+            "handlers": ["console"],
+            "level": "DEBUG" if DEBUG else "INFO",
+            "propagate": False,
+        },
+        "django.request": {
+            "handlers": ["console"],
+            "level": "ERROR",
+            "propagate": False,
+        },
+        "pika": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "grpc": {"handlers": ["console"], "level": "WARNING", "propagate": False},
     },
+    "root": {"handlers": ["console"], "level": "WARNING"},
 }
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -243,4 +263,7 @@ RABBITMQ_EXCHANGE = env("RABBITMQ_EXCHANGE")
 EUREKA_SERVER_URL = env("EUREKA_SERVER_URL", default="") 
 EUREKA_APP_NAME = env("EUREKA_APP_NAME", default="chat-service")
 EUREKA_INSTANCE_HOST = env("EUREKA_INSTANCE_HOST", default="localhost") 
-EUREKA_INSTANCE_PORT = env.int("EUREKA_INSTANCE_PORT", default=8001) 
+EUREKA_INSTANCE_PORT = env.int("EUREKA_INSTANCE_PORT", default=8001)
+
+CHAT_LOG_QUERY_COUNTS = DEBUG
+CHAT_QUERY_COUNT_WARN_THRESHOLD = 10

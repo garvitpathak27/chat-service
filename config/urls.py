@@ -16,6 +16,8 @@ urlpatterns = [
     path("api/", include("chat.api.urls")),
     # /health/ is added at Step 157, deliberately outside /api/ so that
     # Eureka and Docker probe a path with no versioning or auth attached.
-    path("health/",health.liveness  , name="health-liveness")
+    path("health/",health.liveness  , name="health-liveness"),
+    path("health/ready/", health.readiness, name="health-readiness"),
     
+
 ]

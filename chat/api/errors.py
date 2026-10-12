@@ -27,6 +27,29 @@ from rest_framework.views import exception_handler as drf_exception_handler
 
 logger = logging.getLogger("chat.api")
 
+SERVER_ERROR_STATUSES = frozenset({500, 502, 503, 504})
+
+def _log_handled_failure(exc, context, status_code, code) -> None:
+    view = context.get("view") if context else None
+    request = context.get("request") if context else None
+    is_server_error = status_code in SERVER_ERROR_STATUSES
+
+    logger.log(
+        logging.ERROR if is_server_error else logging.DEBUG,
+        "request failed",
+        extra={
+            "operation": "request_failed",
+            "outcome": "server_error" if is_server_error else "client_error",
+            "status": status_code,
+            "error_code": code,
+            "error_type": type(exc).__name__,
+            "view": type(view).__name__ if view is not None else None,
+            "path": getattr(request, "path", None),
+            "method": getattr(request, "method", None),
+        },
+        exc_info=is_server_error,
+    )
+
 
 class ErrorCode:
     """Every error code Chat Service may return. Do not inline string
@@ -173,12 +196,12 @@ def chat_exception_handler(exc, context):
         return None
 
     # IMPORTANT: mutate response.data in place. Building a new Response would
-    # discard the headers DRF just set - WWW-Authenticate on 401 (Step 80)
-    # and Retry-After on 503 (Step 82) - and both are part of ADR-013.
     code = _extract_code(exc, response.status_code)
     message, details = _extract_message_and_details(exc, response.data)
+    _log_handled_failure(exc, context, response.status_code, code)
     response.data = build_error_body(code, message, details, _request_id(context))
     return response
+
 
 
 def _extract_code(exc, status_code) -> str:

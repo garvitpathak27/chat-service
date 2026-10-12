@@ -97,7 +97,7 @@ def test_real_client_accepts_the_token_from_the_header(monkeypatch):
         def __init__(self):
             self.tokens = []
 
-        def ValidateToken(self, request, timeout=None):
+        def ValidateToken(self, request, timeout=None, **kwargs):
             self.tokens.append(request.access_token)
             return auth_pb2.TokenValidationResponse(
                 active=True, user_id="u-7", roles=["USER"]

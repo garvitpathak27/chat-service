@@ -113,15 +113,16 @@ def test_registration_is_idempotent(settings, fake_eureka):
 
 
 def test_registration_failure_does_not_raise(settings, fake_eureka, caplog):
-    """FAIL OPEN: Eureka being down must not stop Chat from serving."""
     settings.EUREKA_SERVER_URL = "http://eureka-server:8761/eureka/"
     fake_eureka.init_error = ConnectionRefusedError("no eureka here")
+    # remove: the duplicate fake_eureka.init_error line
+    # remove: monkeypatch.setattr(logging.getLogger("chat"), "propagate", True)
 
     with caplog.at_level("ERROR", logger="chat.discovery"):
         assert eureka.register_with_eureka() is False
 
     assert "Eureka registration FAILED" in caplog.text
-    assert eureka._registered is False    # a retry later is still possible
+    assert eureka._registered is False
 
 
 def test_deregistration_calls_stop_once(settings, fake_eureka):

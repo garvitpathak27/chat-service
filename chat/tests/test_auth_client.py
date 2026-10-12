@@ -13,7 +13,7 @@ from chat.grpc_clients.exceptions import (
 from chat.grpc_clients.generated import auth_pb2
 from chat.grpc_clients.generated import auth_pb2_grpc
 from chat.grpc_clients.types import AuthIdentity
-
+import json 
 
 class FakeRpcError(grpc.RpcError):
     def __init__(self, code, details="stimulated failure"):
@@ -36,7 +36,7 @@ class FakeStub:
         self._outcomes = list(outcomes)
         self.calls = []
 
-    def ValidateToken(self, request, timeout=None):
+    def ValidateToken(self, request, timeout=None , **kwargs):
         self.calls.append({"token": request.access_token, "timeout": timeout})
 
         outcomes = (
@@ -392,7 +392,7 @@ def test_token_never_appears_in_logs(caplog):
     build(FakeStub(ok_response())).verify_token(secret)
 
     combined = "\n".join(
-        record.getMessage()
+        json.dumps(record.__dict__, default=str)
         for record in caplog.records
     )
 

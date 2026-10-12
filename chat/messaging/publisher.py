@@ -7,6 +7,7 @@ import pika
 from django.conf import settings
 
 from chat.messaging.connection import close_channel, get_channel
+from chat.observability.correlation import get_request_id
 
 logger = logging.getLogger("chat.messaging")
 
@@ -22,16 +23,12 @@ RECONNECTABLE = (
 
 
 def _properties(envelope: dict) -> pika.BasicProperties:
-    """Mirror the envelope into AMQP properties.
-
-    Consumers can then route, deduplicate and trace without parsing the body -
-    and a message inspected in the management UI is identifiable at a glance.
-    """
     return pika.BasicProperties(
         content_type="application/json",
         content_encoding="utf-8",
-        delivery_mode=2,                 # persistent (ADR-006)
-        message_id=envelope["event_id"],  # for consumer-side deduplication
+        delivery_mode=2,
+        message_id=envelope["event_id"],
+        correlation_id=get_request_id() or None,
         type=envelope["type"],
         app_id=envelope["producer"],
         headers={"x-event-version": envelope["version"]},

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+import time
 
 from django.conf import settings
 from django.db import transaction
@@ -106,23 +107,38 @@ def _transport():
 
 
 def publish(event_type: str, payload: dict) -> dict:
-    """Build and ship one event immediately. Prefer publish_on_commit().
-
-    Transport failures are logged and swallowed - see the decision note in
-    this step. Returns the envelope so callers and tests can inspect it.
-    """
     envelope = build_envelope(event_type, payload)
     routing_key = routing_key_for(event_type)
+    started = time.perf_counter()
     try:
         _transport()(envelope, routing_key)
     except Exception:
-        logger.exception(
-            "event publish FAILED type=%s id=%s rk=%s",
-            event_type,
-            envelope["event_id"],
-            routing_key,
+        logger.error(
+            "event publish FAILED",
+            extra={
+                "operation": "event_publish",
+                "outcome": "failed",
+                "event_type": event_type,
+                "event_id": envelope["event_id"],
+                "routing_key": routing_key,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            },
+            exc_info=True,
+        )
+    else:
+        logger.info(
+            "event published",
+            extra={
+                "operation": "event_publish",
+                "outcome": "ok",
+                "event_type": event_type,
+                "event_id": envelope["event_id"],
+                "routing_key": routing_key,
+                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+            },
         )
     return envelope
+
 
 
 def publish_on_commit(event_type: str, payload: dict) -> None:

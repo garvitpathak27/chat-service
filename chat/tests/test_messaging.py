@@ -312,6 +312,8 @@ def test_a_nack_is_not_retried(monkeypatch, envelope):
 
 def test_events_publish_swallows_transport_failures(settings, caplog):
     """ADR-019: the write already committed, so the request must still succeed."""
+    # remove: import logging
+    # remove: monkeypatch.setattr(logging.getLogger("chat"), "propagate", True)
     settings.CHAT_EVENT_TRANSPORT = "chat.tests.test_messaging.exploding_transport"
 
     with caplog.at_level("ERROR", logger="chat.events"):
@@ -319,4 +321,3 @@ def test_events_publish_swallows_transport_failures(settings, caplog):
 
     assert result["type"] == EventType.ROOM_UPDATED
     assert "event publish FAILED" in caplog.text
-
