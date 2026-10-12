@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.urls import include, path
+from chat import health
 
 # JSON, not HTML, for URLs that match no route and for unhandled 500s.
 # Without these, a client parsing JSON gets a parse error instead of a 404,
@@ -15,4 +16,6 @@ urlpatterns = [
     path("api/", include("chat.api.urls")),
     # /health/ is added at Step 157, deliberately outside /api/ so that
     # Eureka and Docker probe a path with no versioning or auth attached.
+    path("health/",health.liveness  , name="health-liveness")
+    
 ]
