@@ -1,0 +1,151 @@
+
+services:
+  chat-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chat-service:local
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      DJANGO_SECRET_KEY: ${CHAT_DJANGO_SECRET_KEY:?set CHAT_DJANGO_SECRET_KEY in .env}
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: chat-service,localhost,127.0.0.1
+      SERVICE_NAME: chat-service
+      SERVICE_PORT: "8001"
+      DB_NAME: chat_db
+      DB_USER: chat_user
+      DB_PASSWORD: ${CHAT_DB_PASSWORD:?set CHAT_DB_PASSWORD in .env}
+      DB_HOST: chat-mysql
+      DB_PORT: "3306"
+      AUTH_GRPC_HOST: auth-service
+      AUTH_GRPC_PORT: "50051"
+      AUTH_GRPC_TIMEOUT_SECONDS: "2.0"
+      AUTH_GRPC_MAX_RETRIES: "2"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_VHOST: /
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_EXCHANGE: chat.events
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka/
+      EUREKA_APP_NAME: chat-service
+      EUREKA_INSTANCE_HOST: chat-service
+      EUREKA_INSTANCE_PORT: "8001"
+      WEB_CONCURRENCY: "3"
+    depends_on:
+      chat-mysql:
+        condition: service_healthy
+      chat-migrate:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      # auth-service and eureka-server live in their OWN compose projects —
+      # Compose can't express depends_on across files. Start those first by
+      # convention; Chat tolerates them being down anyway (fail-closed on
+      # protected endpoints, fail-open on Eureka registration).
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          try:
+              with urllib.request.urlopen("http://127.0.0.1:8001/health/", timeout=3) as r:
+                  sys.exit(0 if r.status == 200 else 1)
+          except Exception:
+              sys.exit(1)
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - chatapp
+
+  chat-migrate:
+    image: chat-service:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    environment:
+      DJANGO_SECRET_KEY: ${CHAT_DJANGO_SECRET_KEY:?}
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: chat-service,localhost,127.0.0.1
+      SERVICE_NAME: chat-service
+      SERVICE_PORT: "8001"
+      DB_NAME: chat_db
+      DB_USER: chat_user
+      DB_PASSWORD: ${CHAT_DB_PASSWORD:?}
+      DB_HOST: chat-mysql
+      DB_PORT: "3306"
+      AUTH_GRPC_HOST: auth-service
+      AUTH_GRPC_PORT: "50051"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_VHOST: /
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_EXCHANGE: chat.events
+
+      EUREKA_SERVER_URL: ""
+    depends_on:
+      chat-mysql:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - chatapp
+
+  chat-mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    command: 
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --sql-mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+    environment:
+      MYSQL_ROOT_PASSWORD: ${CHAT_DB_ROOT_PASSWORD:?set CHAT_DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: chat_db
+      MYSQL_USER: chat_user
+      MYSQL_PASSWORD: ${CHAT_DB_PASSWORD:?set CHAT_DB_PASSWORD}
+    volumes:
+      - chat-mysql-data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - chatapp
+      
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - chat-rabbitmq-data:/var/lib/rabbitmq
+      - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - chatapp
+
+networks:
+  chatapp:
+    external: true
+
+volumes:
+  chat-mysql-data:
+  chat-rabbitmq-data:

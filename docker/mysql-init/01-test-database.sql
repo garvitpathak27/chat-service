@@ -1,0 +1,6 @@
+CREATE DATABASE IF NOT EXISTS `test_chat_db`
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_0900_ai_ci;
+
+GRANT ALL PRIVILEGES ON `test_chat_db`.* TO 'chat_user'@'%';
+FLUSH PRIVILEGES;
