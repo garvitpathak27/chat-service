@@ -260,10 +260,29 @@ RABBITMQ_PASSWORD = env("RABBITMQ_PASSWORD")
 RABBITMQ_EXCHANGE = env("RABBITMQ_EXCHANGE")
 
 
-EUREKA_SERVER_URL = env("EUREKA_SERVER_URL", default="") 
+EUREKA_SERVER_URL = env("EUREKA_SERVER_URL", default="")
 EUREKA_APP_NAME = env("EUREKA_APP_NAME", default="chat-service")
-EUREKA_INSTANCE_HOST = env("EUREKA_INSTANCE_HOST", default="localhost") 
+
+
+def _container_ip() -> str:
+    """Docker resolves a container's own hostname to its container IP.
+
+    Eureka must advertise an address, not a Compose service name: Docker's
+    embedded DNS drops a name the moment its container stops, so a crashed
+    instance looks unresolvable rather than unreachable. An IP also gives
+    each replica a distinct instance id under --scale.
+    """
+    import socket
+
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except OSError:
+        return "localhost"
+
+
+EUREKA_INSTANCE_HOST = env("EUREKA_INSTANCE_HOST", default=_container_ip())
 EUREKA_INSTANCE_PORT = env.int("EUREKA_INSTANCE_PORT", default=8001)
+
 
 CHAT_LOG_QUERY_COUNTS = DEBUG
 CHAT_QUERY_COUNT_WARN_THRESHOLD = 10

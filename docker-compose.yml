@@ -6,8 +6,8 @@ services:
       dockerfile: Dockerfile
     image: chat-service:local
     restart: unless-stopped
-    ports:
-      - "8001:8001"
+    expose:
+      - "8001"
     environment:
       DJANGO_SECRET_KEY: ${CHAT_DJANGO_SECRET_KEY:?set CHAT_DJANGO_SECRET_KEY in .env}
       DJANGO_DEBUG: "False"
@@ -31,7 +31,6 @@ services:
       RABBITMQ_EXCHANGE: chat.events
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka/
       EUREKA_APP_NAME: chat-service
-      EUREKA_INSTANCE_HOST: chat-service
       EUREKA_INSTANCE_PORT: "8001"
       WEB_CONCURRENCY: "3"
     depends_on:
@@ -114,7 +113,7 @@ services:
       - chat-mysql-data:/var/lib/mysql
       - ./docker/mysql-init:/docker-entrypoint-initdb.d:ro
     ports:
-      - "3307:3306"
+      - "127.0.0.1:3307:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
       interval: 10s
@@ -128,8 +127,8 @@ services:
     image: rabbitmq:3-management
     restart: unless-stopped
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     volumes:
       - chat-rabbitmq-data:/var/lib/rabbitmq
       - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
