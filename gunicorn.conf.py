@@ -11,6 +11,6 @@ graceful_timeout = 30
 keepalive = 30
 preload_app = False
 max_requests = 0
-accesslog = None
+accesslog = "-"
 errorlog = "-"
 loglevel = os.environ.get("GUNICORN_LOG_LEVEL", "info")

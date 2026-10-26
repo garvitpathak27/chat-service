@@ -1,0 +1,68 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root
+          MYSQL_DATABASE: chat_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      # settings.py requires every one of these with no default (X-2's
+      # fail-loudly pattern), so CI has to supply the full set.
+      DJANGO_SECRET_KEY: ci-only-not-a-real-secret
+      DJANGO_DEBUG: "False"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
+      SERVICE_NAME: chat-service
+      SERVICE_PORT: "8001"
+      # Connect as root: Django's test runner creates test_chat_db, which a
+      # restricted user scoped to chat_db cannot do.
+      DB_NAME: chat_db
+      DB_USER: root
+      DB_PASSWORD: ci-root
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      AUTH_GRPC_HOST: auth-service
+      AUTH_GRPC_PORT: "50051"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: guest
+      RABBITMQ_PASSWORD: guest
+      RABBITMQ_VHOST: /
+      RABBITMQ_EXCHANGE: chat.events
+      EUREKA_SERVER_URL: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # mysqlclient is a C extension and needs headers at install time.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config default-libmysqlclient-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pip install poetry
+
+      # Dev group needed here: unlike auth-service, this suite runs on pytest.
+      - run: poetry install --no-root
+
+      - run: poetry run pytest
