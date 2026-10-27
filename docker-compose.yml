@@ -60,6 +60,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    # Unbounded containers let one runaway query or load test consume host
+    # memory until the OOM killer fires - and it kills whatever is largest,
+    # not the offender.
+    mem_limit: 512m
     networks:
       - chatapp
 
@@ -120,6 +124,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    # Unbounded containers let one runaway query or load test consume host
+    # memory until the OOM killer fires - and it kills whatever is largest,
+    # not the offender.
+    mem_limit: 768m
     networks:
       - chatapp
       
@@ -138,6 +146,10 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    # Unbounded containers let one runaway query or load test consume host
+    # memory until the OOM killer fires - and it kills whatever is largest,
+    # not the offender.
+    mem_limit: 512m
     networks:
       - chatapp
 
