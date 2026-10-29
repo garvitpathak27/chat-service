@@ -283,6 +283,14 @@ def _container_ip() -> str:
 EUREKA_INSTANCE_HOST = env("EUREKA_INSTANCE_HOST", default=_container_ip())
 EUREKA_INSTANCE_PORT = env.int("EUREKA_INSTANCE_PORT", default=8001)
 
+# Accept requests addressed to the host we advertise. Discovery clients dial
+# exactly this address (lb://chat-service), so without it Django answers
+# 400 DisallowedHost to every caller that does not rewrite Host. The gateway
+# only escaped this through its PreserveHostHeader filter; service-to-service
+# calls (messages-websocket-service's membership check) do not.
+if EUREKA_INSTANCE_HOST not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS = [*ALLOWED_HOSTS, EUREKA_INSTANCE_HOST]
+
 
 CHAT_LOG_QUERY_COUNTS = DEBUG
 CHAT_QUERY_COUNT_WARN_THRESHOLD = 10
