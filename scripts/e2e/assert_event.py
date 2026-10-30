@@ -5,6 +5,10 @@ as produced by e2e-lib.sh's drain_events) matches the expected type/payload.
 Usage:
     python3 assert_event.py --type ROOM_CREATED --expect room_id=<id> --expect created_by=<id>
 
+--producer / --routing-prefix (defaults: chat-service / chat.events) let another
+producer on the same ADR-012 contract (messages-websocket-service) be validated
+by this one script. The defaults keep every existing call site unchanged.
+
 Reads all lines from stdin, finds the first message whose envelope "type"
 matches --type, then checks every --expect key=value against payload[key]
 (falling back to top-level envelope[key] if not in payload). Exits 0 and
@@ -26,7 +30,7 @@ def fail(msg, context=None):
     sys.exit(1)
 
 
-def validate_envelope_shape(envelope, routing_key, message_id):
+def validate_envelope_shape(envelope, routing_key, message_id, producer="chat-service", routing_prefix="chat.events"):
     missing = REQUIRED_KEYS - envelope.keys()
     if missing:
         fail(f"envelope missing required keys: {sorted(missing)}", envelope)
@@ -34,8 +38,8 @@ def validate_envelope_shape(envelope, routing_key, message_id):
     if envelope["version"] != 1:
         fail(f"expected version=1, got {envelope['version']!r}", envelope)
 
-    if envelope["producer"] != "chat-service":
-        fail(f"expected producer='chat-service', got {envelope['producer']!r}", envelope)
+    if envelope["producer"] != producer:
+        fail(f"expected producer={producer!r}, got {envelope['producer']!r}", envelope)
 
     ts = envelope["timestamp"]
     if not isinstance(ts, str) or not ts.endswith("Z"):
@@ -50,10 +54,10 @@ def validate_envelope_shape(envelope, routing_key, message_id):
     except (ValueError, AttributeError):
         fail(f"event_id is not a valid UUID: {envelope['event_id']!r}", envelope)
 
-    if routing_key is not None and routing_key != f"chat.events.{envelope['type'].lower()}":
+    if routing_key is not None and routing_key != f"{routing_prefix}.{envelope['type'].lower()}":
         fail(
             f"routing_key {routing_key!r} does not match event type "
-            f"'chat.events.{envelope['type']}'",
+            f"'{routing_prefix}.{envelope['type']}'",
             envelope,
         )
 
@@ -75,6 +79,8 @@ def main():
         metavar="KEY=VALUE",
         help="payload (or envelope) field that must equal VALUE; repeatable",
     )
+    parser.add_argument("--producer", default="chat-service", help="expected envelope producer")
+    parser.add_argument("--routing-prefix", default="chat.events", help="routing key must be <prefix>.<lowercase type>")
     args = parser.parse_args()
 
     expectations = []
@@ -103,6 +109,8 @@ def main():
                 envelope,
                 routing_key=record.get("routing_key"),
                 message_id=record.get("message_id"),
+                producer=args.producer,
+                routing_prefix=args.routing_prefix,
             )
             matched = envelope
             break
